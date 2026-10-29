@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EduGenAI</title>
+<style>
+:root{font-family:Inter,system-ui,Arial,sans-serif;color:#e8edf4;background:#10151c}
+*{box-sizing:border-box}body{margin:0}main{max-width:980px;margin:32px auto;padding:20px}
+header{padding:24px;border:1px solid #2a3544;border-radius:18px;background:#171f2a}
+h1{margin:0 0 8px;font-size:30px}p{color:#aab8ca;line-height:1.55}
+.panel{margin-top:18px;padding:20px;border:1px solid #2a3544;border-radius:16px;background:#151c26}
+textarea,input,button{font:inherit;border-radius:10px;padding:12px;border:1px solid #354253}
+textarea,input{background:#0f141b;color:#e8edf4;width:100%}textarea{min-height:100px;resize:vertical}
+button{background:#c9f27c;color:#18210e;font-weight:700;cursor:pointer;border:0;margin-top:10px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:16px}.muted{font-size:13px;color:#9baabd}
+#answer{white-space:pre-wrap;line-height:1.6;min-height:80px}.source{font-size:13px;color:#aab8ca;overflow-wrap:anywhere}
+@media(max-width:700px){.row{grid-template-columns:1fr}main{padding:12px}}
+</style></head>
+<body><main>
+<header><h1>📘 EduGenAI</h1><p>Educational AI assistant with document-grounded answers, conversational memory, streaming responses and image/PDF questions.</p></header>
+<section class="panel">
+<label for="session">Session ID (reuse it to continue a conversation)</label>
+<input id="session" placeholder="Leave blank to create a new session">
+<p class="muted">If the server requires APP_ACCESS_TOKEN, enter it below. Never share tokens publicly.</p>
+<input id="token" type="password" placeholder="Optional access token">
+</section>
+<section class="panel">
+<h2>Ask a question</h2><textarea id="question" placeholder="Ask a study question, or ask about PDFs you uploaded through the API."></textarea>
+<label><input id="kb" type="checkbox" checked style="width:auto"> Use uploaded knowledge base</label><br>
+<button id="ask">Ask EduGenAI</button>
+<h3>Answer</h3><div id="answer">Your answer will stream here.</div>
+<h3>Sources</h3><div id="sources" class="source">Sources will appear here when relevant PDF passages are retrieved.</div>
+</section>
+<section class="panel">
+<h2>Ask about an image or PDF</h2><input id="media" type="file" accept="image/png,image/jpeg,image/webp,application/pdf">
+<textarea id="visionQ" placeholder="What should the assistant explain from this image/PDF?"></textarea>
+<button id="visionBtn">Analyze upload</button><div id="visionAnswer"></div>
+</section>
+<section class="panel"><p class="muted">API documentation: <a href="/docs">/docs</a> · Health: <a href="/health">/health</a>. Do not rely on AI output without checking important claims.</p></section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+$('ask').onclick=async()=>{
+ const q=$('question').value.trim(); if(!q){$('answer').textContent='Enter a question first.';return}
+ $('answer').textContent='';$('sources').textContent='Searching...';
+ const headers={'Content-Type':'application/json'};
+ if($('token').value)headers['Authorization']='Bearer '+$('token').value;
+ const response=await fetch('/api/chat/stream',{method:'POST',headers,body:JSON.stringify({message:q,session_id:$('session').value||null,use_knowledge_base:$('kb').checked})});
+ if(!response.ok){$('answer').textContent=await response.text();return}
+ const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='';
+ while(true){const {value,done}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});const parts=buffer.split('\n\n');buffer=parts.pop();
+  for(const part of parts){const dataLine=part.split('\n').find(x=>x.startsWith('data: '));if(!dataLine)continue;try{const data=JSON.parse(dataLine.slice(6));if(data.text)$('answer').textContent+=data.text;if(data.session_id)$('session').value=data.session_id;if(data.sources)$('sources').textContent=data.sources.map(s=>`${s.file}, page ${s.page}: ${s.excerpt}`).join('\n\n')||'No PDF sources retrieved.';if(data.error)$('answer').textContent='Error: '+data.error}catch(e){}}
+ }
+};
+$('visionBtn').onclick=async()=>{
+ const f=$('media').files[0],q=$('visionQ').value.trim();if(!f||!q){$('visionAnswer').textContent='Choose a file and enter a question.';return}
+ const form=new FormData();form.append('file',f);form.append('question',q);
+ const headers={};if($('token').value)headers['Authorization']='Bearer '+$('token').value;
+ $('visionAnswer').textContent='Analyzing...';
+ const res=await fetch('/api/vision',{method:'POST',headers,body:form});const data=await res.json();$('visionAnswer').textContent=data.answer||data.detail||'Request failed.';
+};
+</script></body></html>
